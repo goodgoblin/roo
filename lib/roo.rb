@@ -5,7 +5,7 @@ module Roo
   class Spreadsheet
     class << self
       def open(file, opts = {})
-        file = File === file ? file.path : file
+        file = (File === file || Tempfile === file) ? file.path : file
         
         extension = opts[:extension] ? ".#{opts[:extension]}" : File.extname(file)
         file_warning = opts[:extension] ? :ignore : :error
