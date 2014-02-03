@@ -1,34 +1,34 @@
-require 'fileutils'
 require 'date'
 require 'base64'
-require 'cgi'
+require 'nokogiri'
 
-class Roo::Excel2003XML < Roo::GenericSpreadsheet
+class Roo::Excel2003XML < Roo::Base
 
   # initialization and opening of a spreadsheet file
   # values for packed: :zip
-  def initialize(filename, packed=nil, file_warning=:error)
+  def initialize(filename, options={}, deprecated_file_warning=:error)
+    if Hash === options
+      packed = options[:packed]
+      file_warning = options[:file_warning] || :error
+    else
+      warn 'Supplying `packed` or `file_warning` as separate arguments to `Roo::Excel2003XML.new` is deprecated. Use an options hash instead.'
+      packed = options
+      file_warning = deprecated_file_warning
+    end
+
     make_tmpdir do |tmpdir|
-      filename = open_from_uri(filename, tmpdir) if uri?(filename)
+      filename = download_uri(filename, tmpdir) if uri?(filename)
       filename = unzip(filename, tmpdir) if packed == :zip
 
       file_type_check(filename,'.xml','an Excel 2003 XML', file_warning)
-      @cells_read = Hash.new
       @filename = filename
       unless File.file?(@filename)
         raise IOError, "file #{@filename} does not exist"
       end
-      @doc = Nokogiri::XML(open(@filename))
+      @doc = load_xml(@filename)
     end
-    @default_sheet = self.sheets.first
-    @cell = Hash.new
-    @cell_type = Hash.new
+    super(filename, options)
     @formula = Hash.new
-    @first_row = Hash.new
-    @last_row = Hash.new
-    @first_column = Hash.new
-    @last_column = Hash.new
-    @header_line = 1
     @style = Hash.new
     @style_defaults = Hash.new { |h,k| h[k] = [] }
     @style_definitions = Hash.new
@@ -41,7 +41,7 @@ class Roo::Excel2003XML < Roo::GenericSpreadsheet
   # cell at the first line and first row.
   def cell(row, col, sheet=nil)
     sheet ||= @default_sheet
-    read_cells(sheet) unless @cells_read[sheet]
+    read_cells(sheet)
     row,col = normalize(row,col)
     if celltype(row,col,sheet) == :date
       yyyy,mm,dd = @cell[sheet][[row,col]].split('-')
@@ -55,22 +55,11 @@ class Roo::Excel2003XML < Roo::GenericSpreadsheet
   # The method #formula? checks if there is a formula.
   def formula(row,col,sheet=nil)
     sheet ||= @default_sheet
-    read_cells(sheet) unless @cells_read[sheet]
+    read_cells(sheet)
     row,col = normalize(row,col)
-    if @formula[sheet][[row,col]] == nil
-      return nil
-    else
-      return @formula[sheet][[row,col]]["oooc:".length..-1]
-    end
+    @formula[sheet][[row,col]] && @formula[sheet][[row,col]]["oooc:".length..-1]
   end
-
-  # true, if there is a formula
-  def formula?(row,col,sheet=nil)
-    sheet ||= @default_sheet
-    read_cells(sheet) unless @cells_read[sheet]
-    row,col = normalize(row,col)
-    formula(row,col) != nil
-  end
+  alias_method :formula?, :formula
 
   class Font
     attr_accessor :bold, :italic, :underline
@@ -91,7 +80,7 @@ class Roo::Excel2003XML < Roo::GenericSpreadsheet
   # Given a cell, return the cell's style
   def font(row, col, sheet=nil)
     sheet ||= @default_sheet
-    read_cells(sheet) unless @cells_read[sheet]
+    read_cells(sheet)
     row,col = normalize(row,col)
     style_name = @style[sheet][[row,col]] || @style_defaults[sheet][col - 1] || 'Default'
     @style_definitions[style_name]
@@ -107,7 +96,7 @@ class Roo::Excel2003XML < Roo::GenericSpreadsheet
   # * :datetime
   def celltype(row,col,sheet=nil)
     sheet ||= @default_sheet
-    read_cells(sheet) unless @cells_read[sheet]
+    read_cells(sheet)
     row,col = normalize(row,col)
     if @formula[sheet][[row,col]]
       return :formula
@@ -118,7 +107,7 @@ class Roo::Excel2003XML < Roo::GenericSpreadsheet
 
   def sheets
     @doc.xpath("/ss:Workbook/ss:Worksheet").map do |sheet|
-      sheet['Name']
+      sheet['ss:Name']
     end
   end
 
@@ -133,7 +122,7 @@ class Roo::Excel2003XML < Roo::GenericSpreadsheet
   # mainly for debugging purposes
   def to_s(sheet=nil)
     sheet ||= @default_sheet
-    read_cells(sheet) unless @cells_read[sheet]
+    read_cells(sheet)
     @cell[sheet].inspect
   end
 
@@ -147,7 +136,7 @@ class Roo::Excel2003XML < Roo::GenericSpreadsheet
   def formulas(sheet=nil)
     theformulas = Array.new
     sheet ||= @default_sheet
-    read_cells(sheet) unless @cells_read[sheet]
+    read_cells(sheet)
     first_row(sheet).upto(last_row(sheet)) {|row|
       first_column(sheet).upto(last_column(sheet)) {|col|
         if formula?(row,col,sheet)
@@ -203,9 +192,9 @@ class Roo::Excel2003XML < Roo::GenericSpreadsheet
   #++
   def read_cells(sheet=nil)
     sheet ||= @default_sheet
+    validate_sheet!(sheet)
+    return if @cells_read[sheet]
     sheet_found = false
-    raise ArgumentError, "Error: sheet '#{sheet||'nil'}' not valid" if @default_sheet == nil and sheet==nil
-    raise RangeError unless self.sheets.include? sheet
     @doc.xpath("/ss:Workbook/ss:Worksheet[@ss:Name='#{sheet}']").each do |ws|
       sheet_found = true
       row = 1
@@ -229,7 +218,7 @@ class Roo::Excel2003XML < Roo::GenericSpreadsheet
           end
           c.xpath('./ss:Data').each do |cell|
             formula = cell['Formula']
-            value_type = cell['Type'].downcase.to_sym
+            value_type = cell['ss:Type'].downcase.to_sym
             v =  cell.content
             str_v = v
             case value_type

@@ -1,6 +1,6 @@
 # require deps
-require 'rubygems'
 require 'tmpdir'
+require 'fileutils'
 require 'test/unit'
 require 'shoulda'
 require 'fileutils'
@@ -14,57 +14,16 @@ require File.dirname(__FILE__) + '/../lib/roo'
 
 TESTDIR =  File.join(File.dirname(__FILE__), 'files')
 
-LOG_DIR = File.join(File.dirname(__FILE__),'log')
-LOG_FILE = File.join(LOG_DIR,'roo.log')
+LOG_DIR = File.join(File.dirname(__FILE__),'../log')
+FileUtils.mkdir_p(LOG_DIR)
 
-test_dirs = Dir.glob(File.dirname(__FILE__)+'/*')
-unless test_dirs.include?(LOG_DIR)
-  Dir.mkdir(LOG_DIR)
-end
-
+LOG_FILE = File.join(LOG_DIR,'roo_test.log')
 $log = Logger.new(LOG_FILE)
 
 #$log.level = Logger::WARN
 $log.level = Logger::DEBUG
 
 DISPLAY_LOG = false
-DB_LOG = false
-
-if DB_LOG
-  require 'activerecord'
-
-  def activerecord_connect
-    ActiveRecord::Base.establish_connection(:adapter => "mysql",
-      :database => "test_runs",
-      :host => "localhost",
-      :username => "root",
-      :socket => "/var/run/mysqld/mysqld.sock")
-  end
-
-  class Testrun < ActiveRecord::Base
-  end
-end
-
-
-class Roo::Csv
-  remove_method :cell_postprocessing
-  def cell_postprocessing(row,col,value)
-    if row==1 and col==1
-      return value.to_f
-    end
-    if row==1 and col==2
-      return value.to_s
-    end
-    return value
-  end
-end
-
-# helper method
-def local_only
-  if ENV["roo_local"] == "thomas-p"
-    yield
-  end
-end
 
 # very simple diff implementation
 # output is an empty string if the files are equal
@@ -104,16 +63,9 @@ class File
   end
 end
 
-# :nodoc
-class Fixnum
-  def minutes
-    self * 60
-  end
-end
-
 class Test::Unit::TestCase
   def key_of(spreadsheetname)
-    return {
+    {
       #'formula' => 'rt4Pw1WmjxFtyfrqqy94wPw',
       'formula' => 'o10837434939102457526.3022866619437760118',
       #"write.me" => 'r6m7HFlUOwst0RTUTuhQ0Ow',
@@ -133,7 +85,6 @@ class Test::Unit::TestCase
       'datetime' => "ptu6bbahNZpYQEtZwzL_dZQ",
       'whitespace' => "rZyQaoFebVGeHKzjG6e9gRQ",
       'matrix' => '0AkCuGANLc3jFdHY3cWtYUkM4bVdadjZ5VGpfTzFEUEE',
-    }[spreadsheetname]
     # 'numbers1' => "o10837434939102457526.4784396906364855777",
     # 'borders' => "o10837434939102457526.664868920231926255",
     # 'simple_spreadsheet' => "ptu6bbahNZpYe-L1vEBmgGA",
@@ -143,48 +94,12 @@ class Test::Unit::TestCase
     # 'formula' => 'o10837434939102457526.3022866619437760118',
     # 'time-test' => 'ptu6bbahNZpYBMhk01UfXSg',
     # 'datetime' => "ptu6bbahNZpYQEtZwzL_dZQ",
-  rescue
+    }.fetch(spreadsheetname)
+  rescue KeyError
     raise "unknown spreadsheetname: #{spreadsheetname}"
   end
 
   def yaml_entry(row,col,type,value)
     "cell_#{row}_#{col}: \n  row: #{row} \n  col: #{col} \n  celltype: #{type} \n  value: #{value} \n"
   end
-
-  if DB_LOG
-    if ! (defined?(@connected) and @connected)
-      activerecord_connect
-    else
-      @connected = true
-    end
-  end
-  # alias unlogged_run run
-  # def run(result, &block)
-  #   t1 = Time.now
-  #   if DISPLAY_LOG
-  #       v1,v2,_ = RUBY_VERSION.split('.')
-  #       if v1.to_i > 1 or
-  #         (v1.to_i == 1 and v2.to_i > 8)
-  #         # Ruby 1.9.x
-  #       print "RUNNING #{self.class} #{self.__name__} \t#{Time.now.to_s}"
-  #       else
-  #         # Ruby < 1.9.x
-  #       print "RUNNING #{self.class} #{@method_name} \t#{Time.now.to_s}"
-  #       end
-  #     STDOUT.flush
-  #   end
-  #   unlogged_run result, &block
-  #   t2 = Time.now
-  #   if DISPLAY_LOG
-  #     puts "\t#{t2-t1} seconds"
-  #   end
-  #   if DB_LOG
-  #     Testrun.create(
-  #       :class_name => self.class.to_s,
-  #       :test_name => @method_name,
-  #       :start => t1,
-  #       :duration => t2-t1
-  #     )
-  #   end
-  # end
 end
